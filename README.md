@@ -67,3 +67,20 @@ Para mais detalhes, consulte a documentação oficial (em inglês, com opção d
 - [Documentação oficial do Model Context Protocol](https://modelcontextprotocol.org/docs)
 
 Ou utilize a tradução automática do Google Chrome ou [este link traduzido](https://modelcontextprotocol.org/docs) para acessar a documentação em português.
+
+## Fontes e Referências
+
+- [Build Your First MCP Server with TypeScript (Hackteam)](https://hackteam.io/blog/build-your-first-mcp-server-with-typescript-in-under-10-minutes/)
+- [Copilot Developer Camp](https://microsoft.github.io/copilot-camp/)
+- [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [Playwright MCP](https://github.com/microsoft/playwright-mcp)
+- [Introducing Model Context Protocol (MCP) in Copilot Studio: Simplified Integration with AI Apps and Agents (Microsoft Blog)](https://www.microsoft.com/en-us/microsoft-copilot/blog/copilot-studio/introducing-model-context-protocol-mcp-in-copilot-studio-simplified-integration-with-ai-apps-and-agents/)
+- [my-first-mcp-server (Yusuke Wada)](https://github.com/yusukebe/my-first-mcp-server)
+
+## About the Author
+
+**Lincoln Lopes** ([GitHub: lincolnlopes](https://github.com/lincolnlopes))
+
+- Developer from Brazil
+- Email: lincolnlopes@msn.com
+- Main skills: TypeScript, JavaScript, Node.js, .NET, Docker, React, SQL, Git

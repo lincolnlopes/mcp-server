@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const server = new Server({
-  name: "mcp-server",
+  name: "mcp-server-ts",
   version: "1.0.0",
 }, {
   capabilities: {
