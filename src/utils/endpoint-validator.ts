@@ -60,7 +60,7 @@ export class EndpointValidatorImpl implements EndpointValidator {
 
     for (const field of fieldsToValidate) {
       const value = endpoint[field];
-      if (value && value.length > EndpointValidatorImpl.MAX_LENGTH) {
+      if (typeof value === 'string' && value.length > EndpointValidatorImpl.MAX_LENGTH) {
         console.error(`Campo ${field} excede o tamanho máximo permitido`);
         return false;
       }
