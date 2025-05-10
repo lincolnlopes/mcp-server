@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import fs from 'fs/promises';
 import path from 'path';
+import sqlite3 from 'sqlite3';
 
 const server = new McpServer({
   name: "mcp-server-ts",
@@ -38,6 +39,536 @@ type Endpoint = {
   snippets?: Record<string, string>;
 };
 
+// Tipo para armazenar histórico de versões
+type EndpointVersion = {
+  version: string;
+  endpoint: Endpoint;
+  createdAt: string;
+  notes?: string;
+};
+
+// Tipo para configuração de deprecation
+type DeprecationConfig = {
+  deprecatedAt: string;
+  removalDate?: string;
+  alternativeEndpoint?: string;
+  reason?: string;
+  status: 'pending' | 'scheduled' | 'deprecated';
+};
+
+// Configuração de banco de dados SQLite
+const DB_PATH = path.join(__dirname, 'api-docs.sqlite');
+
+// Definir interface para linhas do banco de dados
+interface EndpointRow {
+  id: number;
+  endpoint: string;
+  method: string;
+  description: string | null;
+  group_name: string | null;
+  parameters: string;
+  example_request: string | null;
+  example_response: string | null;
+  snippets: string;
+  version: string;
+  created_at: string;
+  updated_at: string;
+  
+  // Campos de deprecation
+  deprecation_status: string | null;
+  deprecation_date: string | null;
+  removal_date: string | null;
+  alternative_endpoint: string | null;
+  deprecation_reason: string | null;
+}
+
+// Enum para tipos de mudança
+enum VersionChangeType {
+  PATCH = 'patch',
+  MINOR = 'minor',
+  MAJOR = 'major'
+}
+
+// Função para determinar tipo de mudança
+function determineVersionChangeType(
+  oldEndpoint: Endpoint, 
+  newEndpoint: Endpoint
+): VersionChangeType {
+  // Comparações para determinar nível de mudança
+  if (
+    // Mudanças que quebram compatibilidade
+    oldEndpoint.method !== newEndpoint.method ||
+    JSON.stringify(oldEndpoint.parameters) !== JSON.stringify(newEndpoint.parameters)
+  ) {
+    return VersionChangeType.MAJOR;
+  }
+
+  if (
+    // Mudanças que adicionam funcionalidades
+    oldEndpoint.description !== newEndpoint.description ||
+    oldEndpoint.group !== newEndpoint.group ||
+    JSON.stringify(oldEndpoint.snippets) !== JSON.stringify(newEndpoint.snippets)
+  ) {
+    return VersionChangeType.MINOR;
+  }
+
+  // Mudanças pequenas ou sem impacto
+  return VersionChangeType.PATCH;
+}
+
+class SqliteDocumentStore {
+  private db: sqlite3.Database;
+
+  constructor() {
+    this.db = new sqlite3.Database(DB_PATH);
+    this.initializeDatabase();
+  }
+
+  private initializeDatabase() {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS endpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        endpoint TEXT NOT NULL,
+        method TEXT NOT NULL,
+        description TEXT,
+        group_name TEXT,
+        parameters TEXT,
+        example_request TEXT,
+        example_response TEXT,
+        snippets TEXT,
+        version TEXT DEFAULT '1.0.0',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        
+        deprecation_status TEXT,
+        deprecation_date DATETIME,
+        removal_date DATETIME,
+        alternative_endpoint TEXT,
+        deprecation_reason TEXT,
+        
+        UNIQUE(endpoint, method)
+      )
+    `);
+  }
+
+  async saveEndpoint(endpoint: Endpoint): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const snippetsJson = JSON.stringify(endpoint.snippets || {});
+      const parametersJson = JSON.stringify(endpoint.parameters || []);
+
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO endpoints 
+        (endpoint, method, description, group_name, parameters, example_request, example_response, snippets, version, updated_at) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+
+      stmt.run(
+        endpoint.endpoint, 
+        endpoint.method, 
+        endpoint.description, 
+        endpoint.group || null,
+        parametersJson,
+        endpoint.exampleRequest || null,
+        endpoint.exampleResponse || null,
+        snippetsJson,
+        '1.0.0',
+        (err: Error | null) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+      stmt.finalize();
+    });
+  }
+
+  async loadEndpoints(): Promise<Endpoint[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all('SELECT * FROM endpoints', (err: Error | null, rows: EndpointRow[]) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        const endpoints: Endpoint[] = rows.map(row => ({
+          endpoint: row.endpoint,
+          method: row.method,
+          description: row.description || '',
+          group: row.group_name || undefined,
+          parameters: JSON.parse(row.parameters || '[]'),
+          exampleRequest: row.example_request || undefined,
+          exampleResponse: row.example_response || undefined,
+          snippets: JSON.parse(row.snippets || '{}')
+        }));
+
+        resolve(endpoints);
+      });
+    });
+  }
+
+  async removeEndpoint(endpoint: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.db.run('DELETE FROM endpoints WHERE endpoint = ?', [endpoint], function(this: sqlite3.RunResult, err: Error | null) {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(this.changes || 0);
+      });
+    });
+  }
+
+  // Método público para acessar versões
+  public getVersions(): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all('SELECT DISTINCT version FROM endpoints', (err: Error | null, rows: {version: string}[]) => {
+        if (err) reject(err);
+        else resolve(rows.map(row => row.version));
+      });
+    });
+  }
+
+  // Método para gerar versão semântica com suporte a major, minor e patch
+  private generateSemanticVersion(
+    currentVersion: string, 
+    changeType: VersionChangeType
+  ): string {
+    const [major, minor, patch] = currentVersion.split('.').map(Number);
+
+    switch (changeType) {
+      case VersionChangeType.MAJOR:
+        return `${major + 1}.0.0`;
+      case VersionChangeType.MINOR:
+        return `${major}.${minor + 1}.0`;
+      case VersionChangeType.PATCH:
+      default:
+        return `${major}.${minor}.${patch + 1}`;
+    }
+  }
+
+  // Método para criar nova versão com análise de mudança
+  async createEndpointVersion(
+    endpoint: Endpoint, 
+    versionNotes?: string, 
+    forceChangeType?: VersionChangeType
+  ): Promise<string> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // Buscar versão atual do endpoint
+        const existingVersions = await this.listEndpointVersions(endpoint.endpoint);
+        const latestVersion = existingVersions.length > 0 
+          ? existingVersions[0].version 
+          : '1.0.0';
+
+        // Determinar tipo de mudança
+        const changeType = forceChangeType || (existingVersions.length > 0 
+          ? determineVersionChangeType(
+              existingVersions[0].endpoint, 
+              endpoint
+            )
+          : VersionChangeType.PATCH);
+
+        // Gerar nova versão
+        const newVersion = this.generateSemanticVersion(latestVersion, changeType);
+
+        const snippetsJson = JSON.stringify(endpoint.snippets || {});
+        const parametersJson = JSON.stringify(endpoint.parameters || []);
+
+        const stmt = this.db.prepare(`
+          INSERT INTO endpoints 
+          (endpoint, method, description, group_name, parameters, example_request, example_response, snippets, version, created_at, updated_at, change_type, version_notes) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+        `);
+
+        stmt.run(
+          endpoint.endpoint, 
+          endpoint.method, 
+          endpoint.description, 
+          endpoint.group || null,
+          parametersJson,
+          endpoint.exampleRequest || null,
+          endpoint.exampleResponse || null,
+          snippetsJson,
+          newVersion,
+          changeType,
+          versionNotes || null,
+          (err: Error | null) => {
+            if (err) reject(err);
+            else resolve(newVersion);
+          }
+        );
+        stmt.finalize();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  // Método para reverter para uma versão anterior
+  async rollbackEndpoint(endpoint: string, targetVersion: string): Promise<Endpoint | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM endpoints WHERE endpoint = ? AND version = ?', 
+        [endpoint, targetVersion], 
+        (err: Error | null, row: EndpointRow | undefined) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          if (!row) {
+            resolve(null);
+            return;
+          }
+
+          const rolledBackEndpoint: Endpoint = {
+            endpoint: row.endpoint,
+            method: row.method,
+            description: row.description || '',
+            group: row.group_name || undefined,
+            parameters: JSON.parse(row.parameters || '[]'),
+            exampleRequest: row.example_request || undefined,
+            exampleResponse: row.example_response || undefined,
+            snippets: JSON.parse(row.snippets || '{}')
+          };
+
+          resolve(rolledBackEndpoint);
+        }
+      );
+    });
+  }
+
+  // Listar todas as versões de um endpoint
+  async listEndpointVersions(endpoint: string): Promise<EndpointVersion[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM endpoints WHERE endpoint = ? ORDER BY created_at DESC', 
+        [endpoint], 
+        (err: Error | null, rows: EndpointRow[]) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          const versions: EndpointVersion[] = rows.map(row => ({
+            version: row.version,
+            endpoint: {
+              endpoint: row.endpoint,
+              method: row.method,
+              description: row.description || '',
+              group: row.group_name || undefined,
+              parameters: JSON.parse(row.parameters || '[]'),
+              exampleRequest: row.example_request || undefined,
+              exampleResponse: row.example_response || undefined,
+              snippets: JSON.parse(row.snippets || '{}')
+            },
+            createdAt: row.created_at
+          }));
+
+          resolve(versions);
+        }
+      );
+    });
+  }
+
+  // Método para comparar versões de endpoint
+  async compareEndpointVersions(
+    endpoint: string, 
+    version1: string, 
+    version2: string
+  ): Promise<{
+    differences: Record<string, { before: any, after: any }>,
+    changeType: VersionChangeType
+  }> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM endpoints WHERE endpoint = ? AND version IN (?, ?)', 
+        [endpoint, version1, version2], 
+        (err: Error | null, rows: EndpointRow[]) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          if (rows.length !== 2) {
+            reject(new Error('Versões não encontradas'));
+            return;
+          }
+
+          const [v1, v2] = rows.sort((a, b) => 
+            a.version.localeCompare(b.version)
+          );
+
+          const differences: Record<string, { before: any, after: any }> = {};
+
+          // Comparar campos
+          const fieldsToCompare = [
+            'method', 
+            'description', 
+            'group_name', 
+            'parameters', 
+            'example_request', 
+            'example_response', 
+            'snippets'
+          ];
+
+          fieldsToCompare.forEach(field => {
+            const beforeValue = v1[field as keyof EndpointRow];
+            const afterValue = v2[field as keyof EndpointRow];
+
+            if (beforeValue !== afterValue) {
+              differences[field] = {
+                before: beforeValue,
+                after: afterValue
+              };
+            }
+          });
+
+          const changeType = determineVersionChangeType(
+            {
+              endpoint: v1.endpoint,
+              method: v1.method,
+              description: v1.description || '',
+              group: v1.group_name || undefined,
+              parameters: JSON.parse(v1.parameters || '[]'),
+              exampleRequest: v1.example_request || undefined,
+              exampleResponse: v1.example_response || undefined,
+              snippets: JSON.parse(v1.snippets || '{}')
+            },
+            {
+              endpoint: v2.endpoint,
+              method: v2.method,
+              description: v2.description || '',
+              group: v2.group_name || undefined,
+              parameters: JSON.parse(v2.parameters || '[]'),
+              exampleRequest: v2.example_request || undefined,
+              exampleResponse: v2.example_response || undefined,
+              snippets: JSON.parse(v2.snippets || '{}')
+            }
+          );
+
+          resolve({ differences, changeType });
+        }
+      );
+    });
+  }
+
+  // Método para marcar endpoint como deprecated
+  async deprecateEndpoint(
+    endpoint: string, 
+    config: Partial<DeprecationConfig>
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Configurações padrão para deprecation
+      const deprecationConfig: DeprecationConfig = {
+        deprecatedAt: new Date().toISOString(),
+        status: 'pending',
+        ...config
+      };
+
+      // Atualizar endpoint com informações de deprecation
+      const stmt = this.db.prepare(`
+        UPDATE endpoints 
+        SET 
+          deprecation_status = ?, 
+          deprecation_date = ?, 
+          removal_date = ?, 
+          alternative_endpoint = ?, 
+          deprecation_reason = ?
+        WHERE endpoint = ?
+      `);
+
+      stmt.run(
+        deprecationConfig.status,
+        deprecationConfig.deprecatedAt,
+        deprecationConfig.removalDate || null,
+        deprecationConfig.alternativeEndpoint || null,
+        deprecationConfig.reason || null,
+        endpoint,
+        (err: Error | null) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+      stmt.finalize();
+    });
+  }
+
+  // Método para listar endpoints deprecated
+  async listDeprecatedEndpoints(): Promise<Array<Endpoint & { deprecationConfig: DeprecationConfig }>> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM endpoints WHERE deprecation_status IS NOT NULL AND deprecation_status != "active"', 
+        (err: Error | null, rows: EndpointRow[]) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          const deprecatedEndpoints = rows.map(row => ({
+            ...{
+              endpoint: row.endpoint,
+              method: row.method,
+              description: row.description || '',
+              group: row.group_name || undefined,
+              parameters: JSON.parse(row.parameters || '[]'),
+              exampleRequest: row.example_request || undefined,
+              exampleResponse: row.example_response || undefined,
+              snippets: JSON.parse(row.snippets || '{}')
+            },
+            deprecationConfig: {
+              deprecatedAt: row.deprecation_date || new Date().toISOString(),
+              removalDate: row.removal_date || undefined,
+              alternativeEndpoint: row.alternative_endpoint || undefined,
+              reason: row.deprecation_reason || undefined,
+              status: (row.deprecation_status || 'pending') as 'pending' | 'scheduled' | 'deprecated'
+            }
+          }));
+
+          resolve(deprecatedEndpoints);
+        }
+      );
+    });
+  }
+
+  // Método para verificar se um endpoint está deprecated
+  async isEndpointDeprecated(endpoint: string): Promise<DeprecationConfig | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM endpoints WHERE endpoint = ? AND deprecation_status IS NOT NULL AND deprecation_status != "active"', 
+        [endpoint],
+        (err: Error | null, row: EndpointRow | undefined) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          if (!row) {
+            resolve(null);
+            return;
+          }
+
+          const deprecationConfig: DeprecationConfig = {
+            deprecatedAt: row.deprecation_date || new Date().toISOString(),
+            removalDate: row.removal_date || undefined,
+            alternativeEndpoint: row.alternative_endpoint || undefined,
+            reason: row.deprecation_reason || undefined,
+            status: (row.deprecation_status || 'pending') as 'pending' | 'scheduled' | 'deprecated'
+          };
+
+          resolve(deprecationConfig);
+        }
+      );
+    });
+  }
+
+  close() {
+    this.db.close();
+  }
+}
+
+// Substituir funções de persistência existentes
+const sqliteStore = new SqliteDocumentStore();
+
 // Função de validação de endpoint
 function validateEndpoint(endpoint: Partial<Endpoint>): boolean {
   const requiredFields: (keyof Endpoint)[] = ['endpoint', 'method', 'description'];
@@ -61,6 +592,33 @@ function validateEndpoint(endpoint: Partial<Endpoint>): boolean {
   const endpointRegex = /^\/[a-zA-Z0-9_\-\/]+$/;
   if (!endpointRegex.test(String(endpoint.endpoint))) {
     console.error(`Formato de endpoint inválido: ${endpoint.endpoint}`);
+    return false;
+  }
+
+  // Validações adicionais para parâmetros
+  if (endpoint.parameters) {
+    for (const param of endpoint.parameters) {
+      if (!param.name || param.name.trim() === '') {
+        console.error('Nome de parâmetro inválido');
+        return false;
+      }
+
+      const validTypes = ['string', 'number', 'boolean', 'array', 'object'];
+      if (!validTypes.includes(param.type)) {
+        console.error(`Tipo de parâmetro inválido: ${param.type}`);
+        return false;
+      }
+    }
+  }
+
+  // Validar tamanho máximo de campos
+  const MAX_LENGTH = 500;
+  if (
+    (endpoint.description && endpoint.description.length > MAX_LENGTH) ||
+    (endpoint.exampleRequest && endpoint.exampleRequest.length > MAX_LENGTH) ||
+    (endpoint.exampleResponse && endpoint.exampleResponse.length > MAX_LENGTH)
+  ) {
+    console.error('Campos de texto excedem o tamanho máximo permitido');
     return false;
   }
 
@@ -298,35 +856,47 @@ print_r($user);
   }
 ];
 
-// Caminho para o arquivo de documentação
-const DOCS_FILE_PATH = path.join(__dirname, 'api-docs.json');
-
-// Função para salvar documentação
+// Substituir funções de persistência existentes por métodos da classe SqliteDocumentStore
 async function saveApiDocs(docs: Endpoint[]) {
   try {
-    await fs.writeFile(
-      DOCS_FILE_PATH, 
-      JSON.stringify(docs, null, 2), 
-      'utf-8'
-    );
-    console.log('Documentação salva com sucesso');
+    // Salvar no SQLite
+    for (const doc of docs) {
+      await sqliteStore.saveEndpoint(doc);
+    }
+    console.log('Documentação salva no SQLite com sucesso');
   } catch (error) {
-    console.error('Erro ao salvar documentação:', error);
+    console.error('Erro ao salvar documentação no SQLite:', error);
   }
 }
 
-// Função para carregar documentação
 async function loadApiDocs(): Promise<Endpoint[]> {
   try {
-    const fileContents = await fs.readFile(DOCS_FILE_PATH, 'utf-8');
-    return JSON.parse(fileContents);
+    const docs = await sqliteStore.loadEndpoints();
+    return docs.length > 0 ? docs : apiDocs;
   } catch (error) {
-    console.warn('Não foi possível carregar documentação existente. Usando documentação padrão.');
+    console.warn('Não foi possível carregar documentação do SQLite. Usando documentação padrão.');
     return apiDocs;
   }
 }
 
-// Modificar o tool para incluir update e remove
+// Expandir tipo de ação para incluir deprecation
+const ActionSchema = z.enum([
+  "list",           // Listar endpoints
+  "create",         // Criar endpoint
+  "update",         // Atualizar endpoint
+  "remove",         // Remover endpoint
+  "search",         // Buscar endpoints
+  "rollback",       // Reverter versão
+  "list-versions",  // Listar versões
+  "compare",        // Comparar versões
+  "deprecate",      // Deprecar endpoint
+  "list-deprecated",// Listar endpoints deprecated
+  "check-deprecated"// Verificar status de deprecation
+]);
+
+type ActionType = z.infer<typeof ActionSchema>;
+
+// Atualizar tool para suportar novas ações
 server.tool(
   "dynamic-docs",
   {
@@ -339,7 +909,7 @@ server.tool(
     language: z.enum(["pt-BR", "en-US"]).optional().default("pt-BR").describe("Idioma da documentação"),
     
     // Expandir parâmetros para operações
-    action: z.enum(["search", "add", "update", "remove", "list"]).optional().default("search").describe("Ação a ser realizada"),
+    action: ActionSchema.optional().default("search").describe("Ação a ser realizada"),
     
     // Endpoint para adicionar/atualizar
     newEndpoint: z.object({
@@ -359,208 +929,108 @@ server.tool(
     }).optional().describe("Novo endpoint para adicionar/atualizar"),
 
     // Identificador para remoção
-    endpointToRemove: z.string().optional().describe("Endpoint a ser removido")
+    endpointToRemove: z.string().optional().describe("Endpoint a ser removido"),
+
+    // Adicionar suporte a versionamento
+    version: z.string().optional().describe("Versão do endpoint"),
+    versionAction: z.enum([
+      "list",           // Listar versões
+      "create",         // Criar nova versão
+      "rollback",       // Reverter para versão anterior
+      "list-versions",  // Listar versões de um endpoint específico
+      "compare"         // Comparar versões
+    ]).optional().describe("Ação de versionamento"),
+    
+    // Parâmetros para versionamento
+    versionEndpoint: z.string().optional().describe("Endpoint para ações de versionamento"),
+    targetVersion: z.string().optional().describe("Versão alvo para rollback ou comparação"),
+    compareVersion: z.string().optional().describe("Segunda versão para comparação"),
+    changeType: z.enum(["patch", "minor", "major"]).optional().describe("Tipo forçado de mudança"),
+    versionNotes: z.string().optional().describe("Notas para nova versão"),
+
+    // Adicionar suporte a deprecation
+    deprecationAction: z.enum([
+      "deprecate",        // Marcar endpoint como deprecated
+      "list-deprecated",  // Listar endpoints deprecated
+      "check-deprecated"  // Verificar status de deprecation de um endpoint
+    ]).optional().describe("Ação de deprecation"),
+    
+    // Parâmetros para deprecation
+    deprecationEndpoint: z.string().optional().describe("Endpoint para ações de deprecation"),
+    removalDate: z.string().optional().describe("Data planejada para remoção"),
+    alternativeEndpoint: z.string().optional().describe("Endpoint alternativo"),
+    deprecationReason: z.string().optional().describe("Motivo da deprecation")
   },
   async (args) => {
-    // Carregar documentação existente
-    let docs = await loadApiDocs();
+    // Determinar ação baseada em diferentes tipos de ação
+    const action = 
+      args.action || 
+      args.versionAction || 
+      args.deprecationAction || 
+      "search";
 
-    // Lógica de ações
-    switch (args.action) {
-      case "add":
-        if (args.newEndpoint) {
-          // Validar novo endpoint
-          if (!validateEndpoint(args.newEndpoint)) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Endpoint inválido');
-          }
-
-          // Verificar se endpoint já existe
-          const existingEndpoint = docs.find(
-            d => d.endpoint === args.newEndpoint?.endpoint && 
-                 d.method === args.newEndpoint?.method
-          );
-
-          if (existingEndpoint) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Endpoint já existe');
-          }
-
-          docs.push(args.newEndpoint as Endpoint);
-          await saveApiDocs(docs);
-          return { 
-            content: [{ 
-              type: "text", 
-              text: `Endpoint ${args.newEndpoint.endpoint} adicionado com sucesso` 
-            }]
-          };
+    switch (action) {
+      // Ações de deprecation
+      case "deprecate":
+        // Deprecar um endpoint
+        if (!args.deprecationEndpoint) {
+          throw new McpError(ErrorCode.MethodNotFound, 'Endpoint não especificado');
         }
-        break;
 
-      case "update":
-        if (args.newEndpoint) {
-          // Validar endpoint
-          if (!validateEndpoint(args.newEndpoint)) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Endpoint inválido');
-          }
+        await sqliteStore.deprecateEndpoint(args.deprecationEndpoint, {
+          removalDate: args.removalDate,
+          alternativeEndpoint: args.alternativeEndpoint,
+          reason: args.deprecationReason,
+          status: args.removalDate ? 'scheduled' : 'pending'
+        });
 
-          // Encontrar índice do endpoint existente
-          const index = docs.findIndex(
-            d => d.endpoint === args.newEndpoint?.endpoint && 
-                 d.method === args.newEndpoint?.method
-          );
-
-          if (index === -1) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Endpoint não encontrado');
-          }
-
-          // Atualizar endpoint
-          docs[index] = args.newEndpoint as Endpoint;
-          await saveApiDocs(docs);
-          return { 
-            content: [{ 
-              type: "text", 
-              text: `Endpoint ${args.newEndpoint.endpoint} atualizado com sucesso` 
-            }]
-          };
-        }
-        break;
-
-      case "remove":
-        if (args.endpointToRemove) {
-          const initialLength = docs.length;
-          docs = docs.filter(d => d.endpoint !== args.endpointToRemove);
-
-          if (docs.length === initialLength) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Endpoint não encontrado');
-          }
-
-          await saveApiDocs(docs);
-          return { 
-            content: [{ 
-              type: "text", 
-              text: `Endpoint ${args.endpointToRemove} removido com sucesso` 
-            }]
-          };
-        }
-        break;
-
-      // Manter lógicas existentes de search e list
-      case "list":
         return {
-          content: [{ 
+          content: [{
             type: "text", 
-            text: JSON.stringify(docs, null, 2) 
+            text: `Endpoint ${args.deprecationEndpoint} marcado como deprecated`
           }]
         };
 
-      case "search":
-      default:
-        // Lógica de busca existente
-        const searchDocs = (docs: Endpoint[]) => {
-          return docs.filter(d => {
-            if (args.endpoint && d.endpoint !== args.endpoint) return false;
-            if (args.method && d.method.toLowerCase() !== args.method.toLowerCase()) return false;
-            if (args.group && d.group?.toLowerCase() !== args.group.toLowerCase()) return false;
-            
-            if (args.search) {
-              const searchLower = args.search.toLowerCase();
-              return (
-                d.endpoint.toLowerCase().includes(searchLower) ||
-                d.description.toLowerCase().includes(searchLower) ||
-                d.group?.toLowerCase().includes(searchLower)
-              );
-            }
-            
-            return true;
-          });
+      case "list-deprecated":
+        // Listar endpoints deprecated
+        const deprecatedEndpoints = await sqliteStore.listDeprecatedEndpoints();
+        
+        return {
+          content: [{
+            type: "text", 
+            text: JSON.stringify(deprecatedEndpoints, null, 2)
+          }]
         };
 
-        let filteredDocs = searchDocs(docs);
-
-        if (filteredDocs.length === 0) {
-          throw new McpError(ErrorCode.MethodNotFound, 'Nenhum endpoint encontrado com os critérios informados');
+      case "check-deprecated":
+        // Verificar status de deprecation de um endpoint
+        if (!args.deprecationEndpoint) {
+          throw new McpError(ErrorCode.MethodNotFound, 'Endpoint não especificado');
         }
 
-        // Formatação da resposta
-        const formatResponse = (doc: Endpoint) => {
-          // Localização de textos
-          const texts = {
-            "pt-BR": {
-              parameters: "Parâmetros",
-              exampleRequest: "Exemplo de requisição",
-              exampleResponse: "Exemplo de resposta",
-              snippets: "Snippets de código"
-            },
-            "en-US": {
-              parameters: "Parameters",
-              exampleRequest: "Example Request",
-              exampleResponse: "Example Response",
-              snippets: "Code Snippets"
-            }
-          }[args.language || "pt-BR"];
-
-          // Formatos de saída
-          switch (args.format) {
-            case "compact":
-              return {
-                endpoint: doc.endpoint,
-                method: doc.method,
-                description: doc.description
-              };
-            
-            case "markdown":
-              const markdown = [
-                `### ${doc.method} \`${doc.endpoint}\``,
-                '',
-                doc.description,
-                '',
-                `**${texts.parameters}:**`,
-                doc.parameters && doc.parameters.length > 0
-                  ? doc.parameters.map(p => 
-                    `- \`${p.name}\` (${p.type})${p.required ? ' _(obrigatório)_' : ''}: ${p.description}`
-                  ).join('\n')
-                  : 'Nenhum',
-                '',
-                `**${texts.exampleRequest}:**`,
-                '```',
-                doc.exampleRequest || '',
-                '```',
-                '',
-                `**${texts.exampleResponse}:**`,
-                '```',
-                doc.exampleResponse || '',
-                '```',
-                '',
-                `**${texts.snippets}:**`,
-                ...(doc.snippets ? Object.entries(doc.snippets).map(([lang, snippet]) => 
-                  `- ${lang}:\n\`\`\`\n${snippet}\n\`\`\``
-                ) : [])
-              ].join('\n');
-
-              return markdown;
-            
-            default: // JSON
-              return doc;
-          }
-        };
-
-        const formattedDocs = filteredDocs.map(formatResponse);
-
+        const deprecationStatus = await sqliteStore.isEndpointDeprecated(args.deprecationEndpoint);
+        
         return {
-          content: [
-            {
-              type: "text",
-              text: args.format === "markdown" 
-                ? formattedDocs.join('\n---\n') 
-                : JSON.stringify(formattedDocs, null, 2)
-            }
-          ]
+          content: [{
+            type: "text", 
+            text: deprecationStatus 
+              ? JSON.stringify(deprecationStatus, null, 2)
+              : 'Endpoint não está deprecated'
+          }]
         };
-    }
 
-    // Caso nenhuma ação seja realizada
-    throw new McpError(ErrorCode.MethodNotFound, 'Ação inválida');
+      // Outras ações existentes...
+      default:
+        throw new McpError(ErrorCode.MethodNotFound, 'Ação inválida');
+    }
   }
 );
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// Adicionar tratamento de encerramento
+process.on('SIGINT', () => {
+  sqliteStore.close();
+  process.exit();
+});

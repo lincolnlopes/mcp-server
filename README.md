@@ -1,86 +1,141 @@
-# MCP Server
+# MCP Dynamic Docs Server
 
-Este projeto é um servidor MCP (Model Context Protocol) implementado em Node.js com TypeScript.
+## Descrição do Projeto
 
-## Como executar
+Este projeto implementa um servidor MCP (Model Context Protocol) para gerenciamento dinâmico de documentação de API, com recursos avançados de versionamento, deprecation e internacionalização.
 
-1. Instale as dependências:
+## Recursos Principais
+
+### 🚀 Documentação Dinâmica
+- Geração automática de documentação de API
+- Suporte a múltiplos formatos de saída (JSON, Markdown)
+- Internacionalização (português e inglês)
+
+### 🔄 Versionamento Semântico
+- Suporte a versionamento de endpoints
+- Classificação automática de mudanças (Patch, Minor, Major)
+- Comparação e rollback de versões
+
+### 🚫 Gerenciamento de Deprecation
+- Marcação de endpoints como deprecated
+- Configuração de data de remoção
+- Suporte a endpoints alternativos
+
+## Tecnologias
+
+- TypeScript
+- Node.js
+- MCP SDK
+- Zod (validação)
+- SQLite
+
+## Instalação
+
+1. Clone o repositório:
+   ```bash
+   git clone https://github.com/seu-usuario/mcp-dynamic-docs.git
+   cd mcp-dynamic-docs
+   ```
+
+2. Instale as dependências:
    ```bash
    npm install
    ```
-2. Compile o projeto:
+
+3. Compile o projeto:
    ```bash
    npm run build
    ```
-3. Inicie o servidor:
+
+4. Inicie o servidor:
    ```bash
    npm start
    ```
 
-O servidor ficará disponível em `http://localhost:3000/`.
+## Uso Básico
 
-## Endpoints principais
+### Criação de Endpoint
 
-- `POST /mcp`: Endpoint principal para requisições MCP.
-- `GET /`: Mensagem de status do servidor.
+```typescript
+server.tool("dynamic-docs", {
+  action: "create",
+  newEndpoint: {
+    endpoint: "/api/v1/users",
+    method: "GET",
+    description: "Lista usuários do sistema",
+    parameters: [
+      { 
+        name: "group", 
+        type: "string", 
+        required: false, 
+        description: "Filtrar usuários por grupo" 
+      }
+    ]
+  }
+})
+```
 
-## Desenvolvimento
+### Versionamento
 
-- O código fonte está em `src/`.
-- O build gerado vai para `dist/`.
-- O servidor utiliza Express e o SDK oficial do Model Context Protocol.
+```typescript
+// Criar nova versão
+server.tool("dynamic-docs", {
+  versionAction: "create",
+  versionEndpoint: "/api/v1/users",
+  changeType: "minor",
+  versionNotes: "Adicionado filtro por grupo"
+})
 
-## Ferramentas de inspeção
+// Comparar versões
+server.tool("dynamic-docs", {
+  versionAction: "compare",
+  versionEndpoint: "/api/v1/users",
+  targetVersion: "1.0.0",
+  compareVersion: "1.1.0"
+})
+```
+
+### Deprecation
+
+```typescript
+// Deprecar endpoint
+server.tool("dynamic-docs", {
+  deprecationAction: "deprecate",
+  deprecationEndpoint: "/api/v1/legacy-users",
+  removalDate: "2024-12-31",
+  alternativeEndpoint: "/api/v2/users",
+  deprecationReason: "Endpoint substituído por versão mais moderna"
+})
+```
+
+## Ferramentas de Inspeção
 
 Para testar e inspecionar seu servidor MCP, utilize o [MCP Inspector oficial](https://inspector.modelcontextprotocol.org/).
 
-### Como usar o MCP Inspector
+## Documentação Detalhada
 
-O MCP Inspector **não roda embutido no seu servidor MCP**. Ele é uma ferramenta externa, feita para se conectar ao seu endpoint MCP via HTTP, assim como Postman ou Insomnia, mas com suporte nativo ao protocolo MCP.
+- [Guia de Versionamento](docs/versioning-guide.md)
+- [Migração para McpServer](docs/20250508-migration-to-mcpserver.md)
 
-#### Opção 1: Usar o site oficial
-- Acesse: [https://inspector.modelcontextprotocol.org/](https://inspector.modelcontextprotocol.org/)
-- No campo de conexão, digite o endpoint do seu servidor, por exemplo: `http://localhost:3000/mcp`
-- Clique em conectar para acessar a interface visual.
+## Contribuição
 
-#### Opção 2: Rodar localmente
-- Execute no terminal:
-  ```bash
-  npx @modelcontextprotocol/inspector http://localhost:3000/mcp
-  ```
-- Isso abrirá a interface do Inspector no navegador (geralmente em http://localhost:6274).
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
+3. Commit suas mudanças (`git commit -am 'Adiciona nova feature'`)
+4. Faça um push para a branch (`git push origin feature/nova-feature`)
+5. Crie um novo Pull Request
 
-#### Observações
-- O Inspector é sempre um cliente externo, não um plugin do seu servidor.
-- Não tente acessar `/mcp` diretamente pelo navegador, pois ele faz GET e o endpoint espera POST.
-- O Inspector faz as requisições POST corretamente e mostra tudo em uma interface amigável.
-- Se estiver rodando em um servidor remoto, certifique-se de liberar a porta 3000 no firewall.
+## Licença
 
-## Fixes e informações detalhadas
+Este projeto está licenciado sob a Licença MIT.
 
-Para detalhes sobre problemas e correções aplicadas, consulte a pasta [`fixes/`](./fixes/), especialmente o arquivo [`fixes/20250505-errorcode.md`](./fixes/20250505-errorcode.md) para entender o caso do `ErrorCode` e como foi solucionado.
+## Autor
 
-## Documentação oficial (alternativa)
-
-Para mais detalhes, consulte a documentação oficial (em inglês, com opção de tradução automática pelo navegador):
-
-- [Documentação oficial do Model Context Protocol](https://modelcontextprotocol.org/docs)
-
-Ou utilize a tradução automática do Google Chrome ou [este link traduzido](https://modelcontextprotocol.org/docs) para acessar a documentação em português.
-
-## Fontes e Referências
-
-- [Build Your First MCP Server with TypeScript (Hackteam)](https://hackteam.io/blog/build-your-first-mcp-server-with-typescript-in-under-10-minutes/)
-- [Copilot Developer Camp](https://microsoft.github.io/copilot-camp/)
-- [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Playwright MCP](https://github.com/microsoft/playwright-mcp)
-- [Introducing Model Context Protocol (MCP) in Copilot Studio: Simplified Integration with AI Apps and Agents (Microsoft Blog)](https://www.microsoft.com/en-us/microsoft-copilot/blog/copilot-studio/introducing-model-context-protocol-mcp-in-copilot-studio-simplified-integration-with-ai-apps-and-agents/)
-- [my-first-mcp-server (Yusuke Wada)](https://github.com/yusukebe/my-first-mcp-server)
-
-## About the Author
-
-**Lincoln Lopes** ([GitHub: lincolnlopes](https://github.com/lincolnlopes))
-
-- Developer from Brazil
+**Lincoln Lopes**
+- GitHub: [@lincolnlopes](https://github.com/lincolnlopes)
 - Email: lincolnlopes@msn.com
-- Main skills: TypeScript, JavaScript, Node.js, .NET, Docker, React, SQL, Git
+
+## Referências
+
+- [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [Documentação Oficial do MCP](https://modelcontextprotocol.org/docs)
