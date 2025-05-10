@@ -1,4 +1,4 @@
-import { Endpoint, EndpointValidator } from '../interfaces/endpoint.interface';
+import { Endpoint, EndpointValidator } from '../interfaces/types';
 
 export class EndpointValidatorImpl implements EndpointValidator {
   private static readonly MAX_LENGTH = 500;
@@ -10,7 +10,7 @@ export class EndpointValidatorImpl implements EndpointValidator {
     const requiredFields: (keyof Endpoint)[] = ['endpoint', 'method', 'description'];
     
     for (const field of requiredFields) {
-      if (!endpoint[field] || String(endpoint[field]).trim() === '') {
+      if (!endpoint[field] || String(endpoint[field as string]).trim() === '') {
         console.error(`Validação falhou: campo ${field} é obrigatório`);
         return false;
       }
@@ -59,7 +59,7 @@ export class EndpointValidatorImpl implements EndpointValidator {
     ];
 
     for (const field of fieldsToValidate) {
-      const value = endpoint[field];
+      const value = endpoint[field as string];
       if (typeof value === 'string' && value.length > EndpointValidatorImpl.MAX_LENGTH) {
         console.error(`Campo ${field} excede o tamanho máximo permitido`);
         return false;
