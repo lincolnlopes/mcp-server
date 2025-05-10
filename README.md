@@ -1,139 +1,123 @@
-# MCP Dynamic Docs Server
+# MCP Dynamic Docs 📘
 
 ## Descrição do Projeto
 
-Este projeto implementa um servidor MCP (Model Context Protocol) para gerenciamento dinâmico de documentação de API, com recursos avançados de versionamento, deprecation e internacionalização.
+MCP Dynamic Docs é uma solução avançada para documentação dinâmica de APIs, projetada com princípios SOLID para máxima flexibilidade e manutenibilidade.
 
-## Recursos Principais
+## 🚀 Recursos Principais
 
-### 🚀 Documentação Dinâmica
-- Geração automática de documentação de API
-- Suporte a múltiplos formatos de saída (JSON, Markdown)
-- Internacionalização (português e inglês)
+- **Documentação Dinâmica**: Geração automática e flexível de documentação de API
+- **Versionamento Semântico**: Controle preciso de mudanças de endpoint
+- **Gerenciamento de Deprecation**: Rastreamento e comunicação de endpoints obsoletos
+- **Arquitetura Modular**: Implementação seguindo princípios SOLID
 
-### 🔄 Versionamento Semântico
-- Suporte a versionamento de endpoints
-- Classificação automática de mudanças (Patch, Minor, Major)
-- Comparação e rollback de versões
+## 🏗️ Arquitetura
 
-### 🚫 Gerenciamento de Deprecation
-- Marcação de endpoints como deprecated
-- Configuração de data de remoção
-- Suporte a endpoints alternativos
+### Componentes Principais
 
-## Tecnologias
+1. **Interfaces** (`@interfaces`)
+   - Definições de tipos e contratos
+   - Desacoplamento de implementações
+
+2. **Repositório** (`@repositories`)
+   - Persistência de dados com SQLite
+   - Abstração de operações de banco de dados
+
+3. **Serviços** (`@services`)
+   - Lógica de negócio
+   - Orquestração entre repositório e validadores
+
+4. **Utilitários** (`@utils`)
+   - Validadores
+   - Funções auxiliares
+
+## 📦 Instalação
+
+```bash
+# Clonar o repositório
+git clone https://github.com/seu-usuario/mcp-dynamic-docs.git
+cd mcp-dynamic-docs
+
+# Instalar dependências
+npm install
+
+# Compilar o projeto
+npm run build
+
+# Iniciar o servidor
+npm start
+```
+
+## 🧪 Testes
+
+```bash
+# Executar testes
+npm test
+
+# Verificar cobertura de testes
+npm run test:coverage
+```
+
+## 🔍 Exemplo de Uso
+
+```typescript
+import { DocumentationServiceImpl } from './services/documentation.service';
+import { SqliteEndpointRepository } from './repositories/sqlite-endpoint.repository';
+import { EndpointValidatorImpl } from './utils/endpoint-validator';
+
+const repository = new SqliteEndpointRepository();
+const validator = new EndpointValidatorImpl();
+const docService = new DocumentationServiceImpl(repository, validator);
+
+// Criar um novo endpoint
+await docService.createEndpoint({
+  endpoint: '/api/v1/produtos',
+  method: 'GET',
+  description: 'Listar produtos disponíveis'
+});
+
+// Versionar o endpoint
+const newVersion = await docService.versionEndpoint('/api/v1/produtos');
+
+// Deprecar um endpoint antigo
+await docService.deprecateEndpoint('/api/v1/produtos-legado', {
+  reason: 'Substituído por nova versão',
+  removalDate: '2024-12-31'
+});
+```
+
+## 🌟 Princípios SOLID Aplicados
+
+- **S**ingle Responsibility: Cada classe tem uma única responsabilidade
+- **O**pen/Closed: Extensível sem modificação
+- **L**iskov Substitution: Interfaces garantem comportamento consistente
+- **I**nterface Segregation: Interfaces específicas e enxutas
+- **D**ependency Inversion: Dependências abstratas, não concretas
+
+## 🔧 Configurações
 
 - TypeScript
-- Node.js
-- MCP SDK
-- Zod (validação)
-- SQLite
+- ESLint para qualidade de código
+- Jest para testes
+- Suporte a múltiplas linguagens
 
-## Instalação
+## 🚧 Próximos Passos
 
-1. Clone o repositório:
-   ```bash
-   git clone https://github.com/seu-usuario/mcp-dynamic-docs.git
-   cd mcp-dynamic-docs
-   ```
+- [ ] Adicionar mais testes unitários
+- [ ] Implementar geração de documentação em diferentes formatos
+- [ ] Criar CLI para gerenciamento de documentação
+- [ ] Adicionar suporte a autenticação de API
 
-2. Instale as dependências:
-   ```bash
-   npm install
-   ```
+## 📄 Licença
 
-3. Compile o projeto:
-   ```bash
-   npm run build
-   ```
+MIT License
 
-4. Inicie o servidor:
-   ```bash
-   npm start
-   ```
+## 👥 Contribuições
 
-## Uso Básico
+Contribuições são bem-vindas! Por favor, leia nossas diretrizes de contribuição.
 
-### Criação de Endpoint
-
-```typescript
-server.tool("dynamic-docs", {
-  action: "create",
-  newEndpoint: {
-    endpoint: "/api/v1/users",
-    method: "GET",
-    description: "Lista usuários do sistema",
-    parameters: [
-      { 
-        name: "group", 
-        type: "string", 
-        required: false, 
-        description: "Filtrar usuários por grupo" 
-      }
-    ]
-  }
-})
-```
-
-### Versionamento
-
-```typescript
-// Criar nova versão
-server.tool("dynamic-docs", {
-  versionAction: "create",
-  versionEndpoint: "/api/v1/users",
-  changeType: "minor",
-  versionNotes: "Adicionado filtro por grupo"
-})
-
-// Comparar versões
-server.tool("dynamic-docs", {
-  versionAction: "compare",
-  versionEndpoint: "/api/v1/users",
-  targetVersion: "1.0.0",
-  compareVersion: "1.1.0"
-})
-```
-
-### Deprecation
-
-```typescript
-// Deprecar endpoint
-server.tool("dynamic-docs", {
-  deprecationAction: "deprecate",
-  deprecationEndpoint: "/api/v1/legacy-users",
-  removalDate: "2024-12-31",
-  alternativeEndpoint: "/api/v2/users",
-  deprecationReason: "Endpoint substituído por versão mais moderna"
-})
-```
-
-## Ferramentas de Inspeção
-
-Para testar e inspecionar seu servidor MCP, utilize o [MCP Inspector oficial](https://inspector.modelcontextprotocol.org/).
-
-## Documentação Detalhada
-
-- [Guia de Versionamento](docs/versioning-guide.md)
-- [Migração para McpServer](docs/20250508-migration-to-mcpserver.md)
-
-## Contribuição
-
-1. Faça um fork do projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
-3. Commit suas mudanças (`git commit -am 'Adiciona nova feature'`)
-4. Faça um push para a branch (`git push origin feature/nova-feature`)
-5. Crie um novo Pull Request
-
-## Licença
-
-Este projeto está licenciado sob a Licença MIT.
-
-## Autor
-
-**Lincoln Lopes**
-- GitHub: [@lincolnlopes](https://github.com/lincolnlopes)
-- Email: lincolnlopes@msn.com
+**Autor**: Lincoln Lopes
+**Versão**: 1.0.0
 
 ## Referências
 
