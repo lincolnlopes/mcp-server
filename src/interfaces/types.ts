@@ -10,6 +10,7 @@ export interface CodeSnippet {
 }
 
 export interface Endpoint {
+  [key: string]: any;
   id?: string;
   endpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
