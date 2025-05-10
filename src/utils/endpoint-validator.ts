@@ -1,4 +1,4 @@
-import { Endpoint, EndpointValidator } from '../interfaces/types';
+import { Endpoint, EndpointValidator } from '../interfaces/types.js';
 
 export class EndpointValidatorImpl implements EndpointValidator {
   private static readonly MAX_LENGTH = 500;
