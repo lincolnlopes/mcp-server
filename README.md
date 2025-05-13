@@ -10,6 +10,7 @@ MCP Dynamic Docs é uma solução avançada para documentação dinâmica de API
 - **Versionamento Semântico**: Controle preciso de mudanças de endpoint
 - **Gerenciamento de Deprecation**: Rastreamento e comunicação de endpoints obsoletos
 - **Arquitetura Modular**: Implementação seguindo princípios SOLID
+- **Múltiplos Formatos de Saída**: Suporte a JSON, Markdown e HTML
 
 ## 🏗️ Arquitetura
 
@@ -84,6 +85,15 @@ await docService.deprecateEndpoint('/api/v1/produtos-legado', {
   reason: 'Substituído por nova versão',
   removalDate: '2024-12-31'
 });
+
+// Buscar todos os endpoints em formato JSON
+await server.tool("dynamic-docs", { format: "json" });
+
+// Buscar todos os endpoints em formato Markdown
+await server.tool("dynamic-docs", { format: "markdown" });
+
+// Buscar todos os endpoints em formato HTML
+await server.tool("dynamic-docs", { format: "html" });
 ```
 
 ## 🌟 Princípios SOLID Aplicados
@@ -104,9 +114,12 @@ await docService.deprecateEndpoint('/api/v1/produtos-legado', {
 ## 🚧 Próximos Passos
 
 - [ ] Adicionar mais testes unitários
-- [ ] Implementar geração de documentação em diferentes formatos
 - [ ] Criar CLI para gerenciamento de documentação
 - [ ] Adicionar suporte a autenticação de API
+
+## ✅ Correções Implementadas
+
+Veja mais detalhes em [corrections.md](docs/corrections.md).
 
 ## 📄 Licença
 

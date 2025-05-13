@@ -254,7 +254,7 @@ fetch('/api/v1/pedidos', {
 ## Benefícios do MCP Dynamic Docs
 
 ### 1. Documentação Flexível
-- Suporte a múltiplos formatos de saída
+- Suporte a múltiplos formatos de saída (JSON, Markdown, HTML)
 - Geração automática de documentação
 - Internacionalização
 
@@ -303,4 +303,26 @@ O MCP Dynamic Docs revoluciona a forma como documentamos e gerenciamos APIs. Com
 - [MCP Inspector](https://inspector.modelcontextprotocol.org/)
 
 **Autor**: Lincoln Lopes
-**Última Atualização**: [Data Atual] 
+**Última Atualização**: [Data Atual]
+
+## TSConfig Paths
+
+Adicionado suporte a aliases de paths no `tsconfig.json`. Para resolver o problema de resolução de paths, a dependência `tsconfig-paths` foi instalada e o comando de execução no `package.json` foi ajustado:
+
+```sh
+npm install tsconfig-paths --save-dev
+```
+
+No `package.json`, altere o script de start para:
+
+```json
+"start": "ts-node -r tsconfig-paths/register src/index.ts"
+```
+
+Veja mais em [20250506-tsconfig-paths.md](fixes/20250506-tsconfig-paths.md).
+
+## ErrorCode
+
+Corrigido o uso do `ErrorCode` no SDK MCP. O valor `ErrorCode.ToolNotFound` foi substituído por `ErrorCode.MethodNotFound` para evitar erros de compilação e garantir compatibilidade com o SDK.
+
+Veja mais em [20250505-errorcode.md](fixes/20250505-errorcode.md). 
