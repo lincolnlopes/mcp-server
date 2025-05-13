@@ -12,6 +12,9 @@ import { z } from "zod";
 import fs from 'fs/promises';
 import path from 'path';
 import sqlite3 from 'sqlite3';
+import { formatToMarkdown } from './formatters/markdown-formatter';
+import { formatToHtml } from './formatters/html-formatter';
+import { Endpoint } from './interfaces/endpoint.interface';
 
 const server = new McpServer({
   name: "mcp-server-ts",
@@ -21,23 +24,6 @@ const server = new McpServer({
     tools: {}
   }
 });
-
-// Definir tipo completo para endpoint
-type Endpoint = {
-  endpoint: string;
-  method: string;
-  description: string;
-  group?: string;
-  parameters?: {
-    name: string;
-    type: string;
-    required: boolean;
-    description: string;
-  }[];
-  exampleRequest?: string;
-  exampleResponse?: string;
-  snippets?: Record<string, string>;
-};
 
 // Tipo para armazenar histórico de versões
 type EndpointVersion = {
@@ -191,7 +177,7 @@ class SqliteDocumentStore {
 
         const endpoints: Endpoint[] = rows.map(row => ({
           endpoint: row.endpoint,
-          method: row.method,
+          method: row.method as Endpoint['method'],
           description: row.description || '',
           group: row.group_name || undefined,
           parameters: JSON.parse(row.parameters || '[]'),
@@ -322,7 +308,7 @@ class SqliteDocumentStore {
 
           const rolledBackEndpoint: Endpoint = {
             endpoint: row.endpoint,
-            method: row.method,
+            method: row.method as Endpoint['method'],
             description: row.description || '',
             group: row.group_name || undefined,
             parameters: JSON.parse(row.parameters || '[]'),
@@ -353,7 +339,7 @@ class SqliteDocumentStore {
             version: row.version,
             endpoint: {
               endpoint: row.endpoint,
-              method: row.method,
+              method: row.method as Endpoint['method'],
               description: row.description || '',
               group: row.group_name || undefined,
               parameters: JSON.parse(row.parameters || '[]'),
@@ -426,7 +412,7 @@ class SqliteDocumentStore {
           const changeType = determineVersionChangeType(
             {
               endpoint: v1.endpoint,
-              method: v1.method,
+              method: v1.method as Endpoint['method'],
               description: v1.description || '',
               group: v1.group_name || undefined,
               parameters: JSON.parse(v1.parameters || '[]'),
@@ -436,7 +422,7 @@ class SqliteDocumentStore {
             },
             {
               endpoint: v2.endpoint,
-              method: v2.method,
+              method: v2.method as Endpoint['method'],
               description: v2.description || '',
               group: v2.group_name || undefined,
               parameters: JSON.parse(v2.parameters || '[]'),
@@ -507,15 +493,14 @@ class SqliteDocumentStore {
           const deprecatedEndpoints = rows.map(row => ({
             ...{
               endpoint: row.endpoint,
-              method: row.method,
+              method: row.method as Endpoint['method'],
               description: row.description || '',
               group: row.group_name || undefined,
               parameters: JSON.parse(row.parameters || '[]'),
               exampleRequest: row.example_request || undefined,
               exampleResponse: row.example_response || undefined,
               snippets: JSON.parse(row.snippets || '{}')
-            },
-            deprecationConfig: {
+            },            deprecationConfig: {
               deprecatedAt: row.deprecation_date || new Date().toISOString(),
               removalDate: row.removal_date || undefined,
               alternativeEndpoint: row.alternative_endpoint || undefined,
@@ -905,7 +890,7 @@ server.tool(
     search: z.string().optional().describe("Busca parcial por endpoint, descrição ou grupo"),
     method: z.string().optional().describe("Filtrar por método HTTP (GET, POST, etc.)"),
     group: z.string().optional().describe("Filtrar por grupo de endpoints"),
-    format: z.enum(["json", "markdown", "compact"]).optional().describe("Formato de resposta"),
+    format: z.enum(["json", "markdown", "html"]).optional().default("json").describe("Formato de resposta"),
     language: z.enum(["pt-BR", "en-US"]).optional().default("pt-BR").describe("Idioma da documentação"),
     
     // Expandir parâmetros para operações
@@ -1021,16 +1006,49 @@ server.tool(
 
       // Outras ações existentes...
       default:
-        throw new McpError(ErrorCode.MethodNotFound, 'Ação inválida');
+        // Buscar endpoints
+        let endpoints = await loadApiDocs();
+
+        // Aplicar filtros
+        if (args.search) {
+          endpoints = endpoints.filter(doc =>
+            doc.endpoint.includes(args.search || '') ||
+            doc.description.includes(args.search || '') ||
+            (doc.group && doc.group.includes(args.search || ''))
+          );
+        }
+        if (args.method) {
+          endpoints = endpoints.filter(doc => doc.method === args.method);
+        }
+        if (args.group) {
+          endpoints = endpoints.filter(doc => doc.group === args.group);
+        }
+
+        // Formatar a saída
+        let formattedOutput: string;
+        switch (args.format) {
+          case "markdown":
+            formattedOutput = endpoints.map(formatToMarkdown).join('\n');
+            break;
+          case "html":
+            formattedOutput = endpoints.map(formatToHtml).join('\n');
+            break;
+          default: // "json"
+            formattedOutput = JSON.stringify(endpoints, null, 2);
+        }
+
+        return {
+          content: [{ type: "text", text: formattedOutput }],
+        };
     }
   }
 );
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-
-// Adicionar tratamento de encerramento
-process.on('SIGINT', () => {
-  sqliteStore.close();
-  process.exit();
-});
+(async () => {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  process.on('SIGINT', () => {
+    sqliteStore.close();
+    process.exit();
+  });
+})();
